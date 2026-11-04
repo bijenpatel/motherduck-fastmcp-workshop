@@ -198,5 +198,41 @@ def get_request(request_id: str) -> dict:
     return _format_request(BY_ID[request_id])
 
 
+@mcp.tool(annotations={"readOnlyHint": True})
+def longest_close_time(
+    service: str | None = None,
+    neighborhood: str | None = None,
+) -> dict:
+    """Find the closed 311 request that took the longest time from opened to closed.
+
+    Returns the maximum resolution time in whole hours (rounded) and decimal hours,
+    along with the request ID, service, neighborhood, and masked request details.
+    Use this for questions about the longest, slowest, or maximum time taken to resolve a request.
+    For median resolution times across groups, use median_close_hours instead.
+    For counting requests, use count_requests instead.
+    """
+    _validate_service(service)
+    _validate_neighborhood(neighborhood)
+    rows = [
+        r
+        for r in REQUESTS
+        if (service is None or r.service == service)
+        and (neighborhood is None or r.neighborhood == neighborhood)
+        and r.hours_to_close is not None
+    ]
+    if not rows:
+        raise ToolError("No closed requests found matching the given filters.")
+
+    slowest = max(rows, key=lambda r: r.hours_to_close)
+    return {
+        "whole_hours": round(slowest.hours_to_close),
+        "longest_hours": round(slowest.hours_to_close, 1),
+        "request_id": slowest.request_id,
+        "service": slowest.service,
+        "neighborhood": slowest.neighborhood,
+        "request": _format_request(slowest),
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
