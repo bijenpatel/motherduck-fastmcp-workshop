@@ -3,6 +3,8 @@
 FastMCP Gateway runs this file. Its entrypoint setting is `server.py:mcp`.
 """
 
+import logging
+import re
 from collections import Counter, defaultdict
 from statistics import median
 from typing import Literal
@@ -11,11 +13,29 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from sf311.data import BY_ID, LOCAL_NAMES, NEIGHBORHOODS, REQUESTS, SERVICES, closest
+from sf311.kit import caller_email
+
+logger = logging.getLogger(__name__)
 
 mcp = FastMCP("sf-311")
 
 MAX_ROWS = 50
 MIN_CLOSED_FOR_MEDIAN = 10
+HOUSE_NUMBER = re.compile(r"^(\d+)\s+([^,]+)")
+
+
+def mask_address(address: str) -> str:
+    match = HOUSE_NUMBER.match(address)
+    if not match:
+        return address
+    block = int(match.group(1)) // 100 * 100
+    return f"{block} block of {match.group(2).strip()}"
+
+
+def _format_request(request) -> dict:
+    row = request.as_dict()
+    row["address"] = mask_address(row["address"])
+    return row
 
 GROUPS = {
     "neighborhood": lambda r: r.neighborhood,
@@ -69,6 +89,7 @@ def search_requests(
     """Search individual 311 service requests matching filters, newest first.
 
     Returns up to 50 requests as dictionaries with all request fields.
+    Street addresses are masked to the block.
     Use this when you need detailed records or specific examples.
     For counting or ranking by categories, use count_requests instead.
     For resolution durations, use median_close_hours.
@@ -87,7 +108,7 @@ def search_requests(
         and (status is None or r.status == status)
     ]
     rows.sort(key=lambda r: r.opened, reverse=True)
-    return [r.as_dict() for r in rows[:limit]]
+    return [_format_request(r) for r in rows[:limit]]
 
 
 @mcp.tool(annotations={"readOnlyHint": True})
@@ -166,13 +187,15 @@ def median_close_hours(
 def get_request(request_id: str) -> dict:
     """Retrieve full details for a single service request by its ID.
 
-    Returns the complete dictionary representation of the request.
+    Street addresses are masked to the block. Logs the caller's email.
     Use this when you know the request_id. To discover request IDs matching criteria,
     use search_requests first.
     """
     if request_id not in BY_ID:
         raise ToolError(f"Request ID '{request_id}' not found.")
-    return BY_ID[request_id].as_dict()
+    caller = caller_email() or "local"
+    logger.info("get_request %s for %s", request_id, caller)
+    return _format_request(BY_ID[request_id])
 
 
 if __name__ == "__main__":
